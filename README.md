@@ -80,12 +80,11 @@ coarser than a Dask graph that exposes many array, schema, and I/O keys per part
 ## Install VineGraph
 
 VineGraph is currently a CCTools development interface, so the released `ndcctools` Conda package
-may not include it. Build the known-compatible CCTools revision in its own Conda environment:
+may not include it. Build the `task-graph` branch in its own Conda environment:
 
 ```bash
 git clone --branch task-graph --single-branch https://github.com/JinZhou5042/cctools.git cctools-src
 cd cctools-src
-git checkout e9deeb451e54cec60fcc0c95fb77798aeef561ba
 unset PYTHONPATH
 conda env create -y -f environment.yml
 conda activate cctools-dev
@@ -101,8 +100,8 @@ python -c "from ndcctools.taskvine.vine_graph import VineGraph, Workflow"
 vine_worker --version
 ```
 
-The pinned revision's
-[VineGraph guide](https://github.com/JinZhou5042/cctools/blob/e9deeb451e54cec60fcc0c95fb77798aeef561ba/doc/manuals/taskvine/vine-graph.md)
+The branch's
+[VineGraph guide](https://github.com/JinZhou5042/cctools/blob/task-graph/doc/manuals/taskvine/vine-graph.md)
 covers local workflows, workers, HTCondor submission, factories, and execution parameters.
 
 Then return to this repository, install its Python dependencies, and run from the repository root:
