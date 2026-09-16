@@ -59,9 +59,6 @@ TaskVine does not receive one task per recorded array operation. For `N` fixed p
 `N` leaf tasks and `N - 1` binary combine tasks, or `2N - 1` workflow nodes. This is intentionally
 coarser than a Dask graph that exposes many array, schema, and I/O keys per partition.
 
-See [Architecture](docs/architecture.md) for component ownership and
-[Executor contract](docs/executor-contract.md) for the caller-visible interface.
-
 ## Requirements
 
 - Python 3.11 or newer;
@@ -143,6 +140,37 @@ Task keys must be unique for the entire run. `process`, `combine`, and `empty` m
 graphed `Plan` contract. In particular, `combine` must be associative and commutative, and task
 bodies should be safe to retry because TaskVine may re-execute work after worker loss.
 
+## Integration interface
+
+```python
+TaskVineExecutor(
+    manager=None,                 # optional caller-owned VineGraph manager
+    manager_name="graphed-taskvine",
+    port=(9100, 9199),
+    local=False,                  # VineGraph local-execute mode
+    libcores=16,
+    wait_for_workers=0,
+    work_dir=None,
+    ship=(),                      # extra worker-side modules
+    params=None,                  # additional VineGraph parameters
+)
+```
+
+The executor accepts `graphed.core.execution.Plan` and returns
+`graphed.core.execution.ExecResult`. Construction is lazy: the manager is created only when a
+non-empty plan runs or `.manager` is accessed. A caller-supplied manager remains caller-owned;
+otherwise `close()` or the context manager releases the executor-owned manager.
+
+`lower(plan)` is public for graph inspection and benchmarking. It returns the VineGraph workflow
+and root handle, and requires at least one task. Missing shipped paths, duplicate sandbox
+destinations, and duplicate task keys fail before submission. Worker failures preserve their
+original exception type when serializable; otherwise `TaskVineWorkerError` carries the remote
+traceback.
+
+Plans and shipped modules are trusted executable inputs. TaskVine may retry leaves or combines, so
+external writes must be idempotent or content-addressed. Adaptive stop conditions are evaluated
+between rounds rather than during a running round.
+
 ## Current limitations
 
 - The executor accepts the provisional `graphed.core.execution.Plan`; it does not yet execute
@@ -154,8 +182,12 @@ bodies should be safe to retry because TaskVine may re-execute work after worker
 - TaskVine and the worker environment are operational prerequisites rather than Python package
   dependencies resolvable by `pip`.
 
-The possible stage-level extension and its tradeoffs are documented in
-[Stage task exploration](docs/stage-task-exploration.md).
+Scheduling individual fused stages is technically possible but is not the default direction. It
+would require stage-addressable evaluation, durable intermediate schemas, worker affinity, and
+intermediate transfer/cache ownership. For DV5, expanding 35 stages plus one External across 4,000
+partitions would create roughly 144,000 computation tasks before result reduction. A future
+extension should therefore introduce optional coarse boundaries around measured expensive
+Externals, resource transitions, or checkpoints instead of creating one remote task per stage.
 
 ## DV5 integration result
 
@@ -193,13 +225,12 @@ The default test suite uses VineGraph local execution. Run the worker integratio
 GTV_WORKER=1 pytest tests/test_executor.py
 ```
 
-Contribution workflow and compatibility expectations are in [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## Security boundary
 
 Plans and worker results use `cloudpickle`. Only execute plans and accept worker connections from
 trusted sources. Deserializing an untrusted plan is equivalent to executing arbitrary Python code.
-See [SECURITY.md](SECURITY.md) for the supported reporting path and deployment assumptions.
+The adapter delegates worker authentication, network policy, and filesystem isolation to the
+TaskVine deployment. Do not embed credentials in plans, partition URIs, logs, or shipped modules.
 
 ## License
 
