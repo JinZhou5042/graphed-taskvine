@@ -77,24 +77,35 @@ coarser than a Dask graph that exposes many array, schema, and I/O keys per part
 - `graphed-executors >= 0.0.2`;
 - a TaskVine build that provides `ndcctools.taskvine.vine_graph`.
 
-TaskVine is distributed through CCTools. The standard installation route is Conda:
+## Install VineGraph
+
+VineGraph is currently a CCTools development interface, so the released `ndcctools` Conda package
+may not include it. Build the known-compatible CCTools revision in its own Conda environment:
 
 ```bash
-conda install -c conda-forge ndcctools
+git clone --branch task-graph --single-branch https://github.com/JinZhou5042/cctools.git cctools-src
+cd cctools-src
+git checkout e9deeb451e54cec60fcc0c95fb77798aeef561ba
+unset PYTHONPATH
+conda env create -y -f environment.yml
+conda activate cctools-dev
+./configure --with-base-dir "$CONDA_PREFIX" --prefix "$CONDA_PREFIX"
+make -j4
+make install
 ```
 
-VineGraph is currently a development interface and may not be present in every CCTools release.
-Verify the required surface before using this integration:
+Verify both the Python interface and worker executable:
 
 ```bash
 python -c "from ndcctools.taskvine.vine_graph import VineGraph, Workflow"
+vine_worker --version
 ```
 
-For VineGraph development, use the
-[`sc26` CCTools branch](https://github.com/JinZhou5042/cctools/tree/sc26) until the interface is
-available in an upstream CCTools release.
+The pinned revision's
+[VineGraph guide](https://github.com/JinZhou5042/cctools/blob/e9deeb451e54cec60fcc0c95fb77798aeef561ba/doc/manuals/taskvine/vine-graph.md)
+covers local workflows, workers, HTCondor submission, factories, and execution parameters.
 
-Clone the repository, install its development dependencies, and run from the repository root:
+Then return to this repository, install its Python dependencies, and run from the repository root:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -240,13 +251,6 @@ The default test suite uses VineGraph local execution. Run the worker integratio
 ```bash
 GTV_WORKER=1 python -m pytest -q tests/test_executor.py
 ```
-
-## Security boundary
-
-Plans and worker results use `cloudpickle`. Only execute plans and accept worker connections from
-trusted sources. Deserializing an untrusted plan is equivalent to executing arbitrary Python code.
-The adapter delegates worker authentication, network policy, and filesystem isolation to the
-TaskVine deployment. Do not embed credentials in plans, partition URIs, logs, or shipped modules.
 
 ## License
 
