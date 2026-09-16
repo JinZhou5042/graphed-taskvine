@@ -1,10 +1,16 @@
 from pathlib import Path
 
 import pytest
-from graphed.core.execution import StopReason
+from graphed.core.execution import Executor, StopReason
 
 import toy_plans
-from graphed_taskvine import TaskVineExecutor
+from taskvine_backend import TaskVineExecutor
+
+
+def test_public_executor_implements_graphed_protocol(tmp_path):
+    executor = TaskVineExecutor(work_dir=tmp_path)
+    assert isinstance(executor, Executor)
+    assert set(executor.env_files.values()) == {"_task_runtime.py"}
 
 
 def test_empty_plan_does_not_create_a_manager(tmp_path):

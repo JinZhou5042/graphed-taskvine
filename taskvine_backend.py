@@ -39,11 +39,14 @@ except ModuleNotFoundError as exc:
 else:
     _TASKVINE_IMPORT_ERROR = None
 
-from . import _loader, worker
+import _task_runtime
+import _vinegraph_context
 
-cloudpickle.register_pickle_by_value(_loader)
+__all__ = ["RunStats", "TaskVineExecutor", "TaskVineWorkerError"]
 
-PACKAGE_DIR = Path(__file__).resolve().parent
+cloudpickle.register_pickle_by_value(_vinegraph_context)
+
+RUNTIME_FILE = Path(_task_runtime.__file__).resolve()
 
 
 def _require_taskvine():
@@ -69,7 +72,7 @@ class _GraphedVineGraph(VineGraph):
         registration.add_hoisting_modules(hoisting_modules)
         registration.add_env_files(env_files)
         registration.set_context_loader(
-            _loader.context_loader, context_loader_args=[cloudpickle.dumps(py_graph)]
+            _vinegraph_context.context_loader, context_loader_args=[cloudpickle.dumps(py_graph)]
         )
         registration.set_cores(self.get_param("libcores"))
         registration.set_name(bridge.get_task_runner_library_name())
@@ -138,7 +141,7 @@ class TaskVineExecutor:
         same lowering, same reduction tree. For tests and graph-construction benchmarks.
     ship:
         Extra files/directories workers must import (analysis modules referenced by import ref,
-        e.g. a ``"dv5_graphed:make_backend"`` backend). ``graphed_taskvine`` itself always ships.
+        e.g. a ``"dv5_graphed:make_backend"`` backend). The private task runtime always ships.
     params:
         Extra VineGraph parameters (``libcores``, ``wait-for-workers``, ``task-priority-mode``, ...).
     """
@@ -170,8 +173,8 @@ class TaskVineExecutor:
         }
         self.local = local
         self.work_dir = Path(work_dir or Path.cwd() / "vine-graph-work").resolve()
-        self.env_files = {str(PACKAGE_DIR): "graphed_taskvine"}
-        destinations = {"graphed_taskvine"}
+        self.env_files = {str(RUNTIME_FILE): RUNTIME_FILE.name}
+        destinations = {RUNTIME_FILE.name}
         for path in ship:
             path = Path(path).resolve()
             if not path.exists():
@@ -231,7 +234,11 @@ class TaskVineExecutor:
             self.last_stats.total_s = time.perf_counter() - start
 
     def lower(self, plan, tasks=None, *, collect_durations=False):
-        """Plan -> (Workflow, root TaskHandle). Public so graph construction can be timed alone."""
+        """Plan -> (Workflow, root TaskHandle).
+
+        This is an advanced inspection and benchmarking hook, not part of the stable executor
+        interface.
+        """
         tasks = _sorted_unique_tasks(plan.tasks if tasks is None else tasks)
         if not tasks:
             raise ValueError("cannot lower an empty task set; run(plan) returns plan.empty() directly")
@@ -239,12 +246,16 @@ class TaskVineExecutor:
         blob = cloudpickle.dumps((plan.process, plan.combine, plan.empty))
         workflow = Workflow()
         nodes = {
-            i: workflow.add_task(worker.run_leaf, blob, t.key, _portable(t.partition), collect_durations)
+            i: workflow.add_task(
+                _task_runtime.run_leaf, blob, t.key, _portable(t.partition), collect_durations
+            )
             for i, t in enumerate(tasks)
         }
         combines, root = plan_tree(len(tasks))
         for out, a, b in combines:
-            nodes[out] = workflow.add_task(worker.run_combine, blob, nodes[a].output(), nodes[b].output())
+            nodes[out] = workflow.add_task(
+                _task_runtime.run_combine, blob, nodes[a].output(), nodes[b].output()
+            )
         workflow.finalize()
         return workflow, nodes[root]
 

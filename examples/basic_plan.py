@@ -2,7 +2,7 @@
 
 from graphed.core.execution import Partition, Plan, Task
 
-from graphed_taskvine import TaskVineExecutor
+from taskvine_backend import TaskVineExecutor
 
 
 def partition_size(partition, resources):

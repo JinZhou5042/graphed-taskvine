@@ -7,7 +7,7 @@ def context_loader(graph_pkl):
 
     import cloudpickle
 
-    # Library inputs (the shipped graphed_taskvine package, analysis modules) land in the library
+    # Library inputs (the shipped task runtime and analysis modules) land in the library
     # sandbox; make them importable before unpickling a graph that references them by import.
     sandbox = os.getcwd()
     if sandbox not in sys.path:
@@ -18,9 +18,9 @@ def context_loader(graph_pkl):
     # all calls: unpickle each plan's (process, combine, empty) once and import graphed/awkward now,
     # instead of once per call.
     try:
-        from graphed_taskvine import worker
+        import _task_runtime
 
-        worker.prime(graph)
+        _task_runtime.prime(graph)
     except Exception as exc:  # priming is an optimization; calls still unpickle on demand
-        print(f"graphed_taskvine: priming skipped: {exc!r}", file=sys.stderr)
+        print(f"graphed-taskvine: priming skipped: {exc!r}", file=sys.stderr)
     return {"graph": graph}

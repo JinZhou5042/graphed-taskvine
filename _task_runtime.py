@@ -1,9 +1,9 @@
-"""Worker-side task bodies for TaskVineExecutor.
+"""Private worker-side task bodies for :class:`taskvine_backend.TaskVineExecutor`.
 
 These functions run inside the VineGraph task-runner library on a TaskVine worker (or in-process
 under ``local-execute``). They are referenced BY IMPORT from the shipped graph, so this package must
 be importable on the worker: the executor ships the package directory as a library input and the
-context loader in :mod:`graphed_taskvine._loader` puts the library sandbox on ``sys.path``.
+context loader in :mod:`_vinegraph_context` puts the library sandbox on ``sys.path``.
 
 Two VineGraph argument rules shape this module:
 
@@ -23,8 +23,8 @@ import traceback
 
 import cloudpickle
 
-_FN_CACHE_ATTR = "_graphed_taskvine_fn_cache"
-_RESOURCES_ATTR = "_graphed_taskvine_resources"
+_FN_CACHE_ATTR = "_gtv_fn_cache"
+_RESOURCES_ATTR = "_gtv_resources"
 
 
 class Partial:

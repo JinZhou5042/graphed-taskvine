@@ -5,8 +5,19 @@
 It keeps graphed's partition and reduction semantics while using TaskVine for distributed
 scheduling, data movement, recovery, and worker management.
 
-The project is an early integration package. Its first objective is to keep the boundary between
-graphed and TaskVine small, explicit, and testable while both projects evolve.
+This repository contains the integration layer; it is not intended to become a separately
+published package. Its first objective is to keep the boundary between graphed and TaskVine small,
+explicit, and testable while both projects evolve.
+
+The source boundary is deliberately flat:
+
+```text
+taskvine_backend.py       stable driver-side interface
+_task_runtime.py          private worker-side process/combine bodies
+_vinegraph_context.py     private VineGraph library initialization
+```
+
+There is no repository-named Python package or duplicated graphed source tree.
 
 ## Architecture
 
@@ -73,7 +84,7 @@ conda install -c conda-forge ndcctools
 ```
 
 VineGraph is currently a development interface and may not be present in every CCTools release.
-Verify the required surface before installing this package:
+Verify the required surface before using this integration:
 
 ```bash
 python -c "from ndcctools.taskvine.vine_graph import VineGraph, Workflow"
@@ -83,7 +94,8 @@ For VineGraph development, use the
 [`sc26` CCTools branch](https://github.com/JinZhou5042/cctools/tree/sc26) until the interface is
 available in an upstream CCTools release.
 
-Install this repository in editable mode:
+Use the repository directly. An editable install is convenient for development and does not imply
+publication as a separate package:
 
 ```bash
 python -m pip install -e .
@@ -94,7 +106,7 @@ python -m pip install -e .
 Build a normal graphed plan, then choose `TaskVineExecutor` at execution time:
 
 ```python
-from graphed_taskvine import TaskVineExecutor
+from taskvine_backend import TaskVineExecutor
 
 plan = build_plan()  # graphed.core.execution.Plan
 
@@ -161,11 +173,16 @@ The executor accepts `graphed.core.execution.Plan` and returns
 non-empty plan runs or `.manager` is accessed. A caller-supplied manager remains caller-owned;
 otherwise `close()` or the context manager releases the executor-owned manager.
 
-`lower(plan)` is public for graph inspection and benchmarking. It returns the VineGraph workflow
-and root handle, and requires at least one task. Missing shipped paths, duplicate sandbox
-destinations, and duplicate task keys fail before submission. Worker failures preserve their
-original exception type when serializable; otherwise `TaskVineWorkerError` carries the remote
-traceback.
+The stable interface is `TaskVineExecutor.run(plan) -> ExecResult`, the lifecycle methods
+`close()`, `__enter__()`, and `__exit__()`, `last_stats`, `RunStats`, and
+`TaskVineWorkerError`. It directly implements graphed's existing `Executor` protocol; this
+repository does not define a competing executor interface.
+
+`lower(plan)` remains available as an advanced graph-inspection and benchmarking hook, but it is
+not part of the compatibility contract. It returns the VineGraph workflow and root handle, and
+requires at least one task. Missing shipped paths, duplicate sandbox destinations, and duplicate
+task keys fail before submission. Worker failures preserve their original exception type when
+serializable; otherwise `TaskVineWorkerError` carries the remote traceback.
 
 Plans and shipped modules are trusted executable inputs. TaskVine may retry leaves or combines, so
 external writes must be idempotent or content-addressed. Adaptive stop conditions are evaluated
