@@ -123,31 +123,35 @@ python -c "import graphed; from taskvine_backend import TaskVineExecutor"
 
 ## Quick start
 
-The example reconstructs the Z boson peak from the 2,304-event CMS dimuon ROOT sample used in the
-[Uproot getting-started guide](https://uproot.readthedocs.io/en/stable/basic.html). The sample is
-derived from [CMS Run2010B open data](https://opendata.cern.ch/record/700). It downloads the ROOT
-file, converts the ten required branches to Parquet, selects opposite-sign muons, records the
-invariant-mass calculation with Graphed, and fills a 60-120 GeV histogram through this executor.
+The example reconstructs the H -> gamma gamma diphoton mass spectrum from the 16 public GamGam ROOT
+files of the `2025e-13tev-beta` [ATLAS Open Data](https://opendata.cern.ch) 13 TeV release (about
+9.86 GB). It downloads the files through `atlasopenmagic`/`fsspec`, keeps the leading two photons per
+event, records the same selection as the ATLAS Open Data H->yy notebook (tight photon ID, pT,
+calorimeter isolation, eta transition-region veto, and the diphoton invariant mass) with Graphed, and
+fills a 100-160 GeV histogram through this executor. One partition is created per input ROOT file.
 
 Run the complete workflow locally through VineGraph:
 
 ```bash
-python -m examples.cms_dimuon
+python -m examples.atlas_hyy
 ```
 
-Expected summary:
+Expected summary (from an actual run against the full 16-file dataset):
 
 ```text
-events in 60-120 GeV: 2004
-highest bin center: 90.5 GeV
-process/combine tasks: 5/4
+events in 100-160 GeV: 251659
+highest bin center: 100.5 GeV
+process/combine tasks: 16/15
 ```
 
-The core analysis in [`examples/cms_dimuon.py`](examples/cms_dimuon.py) is ordinary deferred
-Graphed code:
+The highest bin sits at the low edge of the window because the diphoton background falls roughly
+monotonically over 100-160 GeV; the H -> gamma gamma signal is a small excess near 125 GeV on top of
+that background, not the tallest bin, at this sample size.
+
+The core analysis in [`examples/atlas_hyy.py`](examples/atlas_hyy.py) is ordinary deferred Graphed
+code operating on the flattened leading-two-photon columns:
 
 ```python
-import boost_histogram as bh
 import graphed_histogram as gh
 from graphed import Session
 from graphed.awkward import AwkwardBackend, from_parquet
@@ -155,18 +159,18 @@ from graphed.awkward import AwkwardBackend, from_parquet
 from taskvine_backend import TaskVineExecutor
 
 session = Session(AwkwardBackend())
-events = from_parquet(session, "events", "cms-dimuon-data/Zmumu.parquet")
-muons = events[events.Q1 * events.Q2 < 0]
-mass2 = (
-    (muons.E1 + muons.E2) ** 2
-    - (muons.px1 + muons.px2) ** 2
-    - (muons.py1 + muons.py2) ** 2
-    - (muons.pz1 + muons.pz2) ** 2
-)
+events = from_parquet(session, "events", [str(p) for p in parquet_paths])  # one file per partition
 
-histogram = gh.boost.Histogram(bh.axis.Regular(60, 60, 120), storage=bh.storage.Int64())
-histogram.fill(mass2**0.5)
-plan = gh.plan({"dimuon_mass": histogram}, steps_per_file=5)
+tight = events.isTightID_0 & events.isTightID_1
+pt_cut = (events.pt_0 > 50) & (events.pt_1 > 30)
+isolation = (events.ptcone20_0 / events.pt_0 < 0.055) & (events.ptcone20_1 / events.pt_1 < 0.055)
+eta_ok = in_transition_veto(events.eta_0) & in_transition_veto(events.eta_1)
+selected = events[tight & pt_cut & isolation & eta_ok]
+
+mass = diphoton_mass(selected)  # by-hand 4-vector algebra, same formula as examples/cms_dimuon.py
+histogram = gh.boost.Histogram(bh.axis.Regular(60, 100.0, 160.0), storage=bh.storage.Int64())
+histogram.fill(mass)
+plan = gh.plan({"diphoton_mass": histogram})
 
 with TaskVineExecutor(local=True, port=0) as executor:
     result = executor.run(plan)
@@ -176,14 +180,17 @@ To execute the same plan on a TaskVine worker, use two terminals in the same env
 
 ```bash
 # terminal 1
-vine_worker -M graphed-dimuon --cores 4
+vine_worker -M graphed-hyy --cores 4
 
 # terminal 2, from this repository
-python -m examples.cms_dimuon --distributed
+python -m examples.atlas_hyy --distributed
 ```
 
 `local=True` still uses VineGraph and the same binary reduction topology; it is not the same as
 graphed's `SequentialRunner`.
+
+[`examples/cms_dimuon.py`](examples/cms_dimuon.py) remains in the repository as a much smaller and
+faster (single-file, 2,304-event) smoke test of the same pattern.
 
 ## Execution guarantees
 
