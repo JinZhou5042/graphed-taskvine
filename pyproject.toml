@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "graphed-taskvine"
+version = "0.1.0"
+description = "Run graphed plans on TaskVine through VineGraph"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Jin Zhou" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "cloudpickle>=3",
+  "graphed>=0.0.2",
+  "graphed-executors>=0.0.2",
+]
+
+[project.optional-dependencies]
+test = [
+  "awkward>=2.6",
+  "boost-histogram>=1.4",
+  "graphed-histogram>=0.0.2",
+  "numpy>=1.24",
+  "pytest>=8",
+  "ruff>=0.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/JinZhou5042/graphed-taskvine"
+Repository = "https://github.com/JinZhou5042/graphed-taskvine"
+Issues = "https://github.com/JinZhou5042/graphed-taskvine/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/graphed_taskvine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+src = ["src", "tests", "examples"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+exclude = ["*.md"]
