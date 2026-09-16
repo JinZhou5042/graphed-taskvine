@@ -244,42 +244,74 @@ Plans and shipped modules are trusted executable inputs. TaskVine may retry leav
 external writes must be idempotent or content-addressed. Adaptive stop conditions are evaluated
 between rounds rather than during a running round.
 
-## Current limitations
+## graphed vs. traditional Dask/coffea: the DV5 workflow
 
-- The executor accepts the provisional `graphed.core.execution.Plan`; it does not yet execute
-  `DurablePlanV2` shuffle or join stages.
-- VineGraph task-runner calls currently fork from the worker library process. Imports are primed in
-  the parent, but file handles opened through `resources.open_once` do not persist across calls.
-- The complete IR for a partition runs inside one leaf task. IR stages are not separately scheduled
-  across workers.
-- TaskVine and the worker environment are operational prerequisites rather than Python package
-  dependencies resolvable by `pip`.
+DV5 is the ECF-calculator H→γγ PFNano skim behind the DAGVine/SC26 hero run: a real ATLAS
+diphoton analysis (softdrop-fix event cut, trigger OR, lepton/tau counting with ΔR cleaning,
+b-tag counting, generator-level Higgs matching, the fat-jet selection, and per-jet substructure —
+color ring and energy correlation functions via `fastjet`). `dv5_graphed.py` records the whole
+selection above in graphed; jet substructure (PF constituents → fastjet C/A → soft drop → ECFs +
+color ring) is one **External** node, because fastjet cannot run on awkward typetracers, so
+graphed takes its output form from running it once on a tiny synthetic event. No coffea is used
+on the graphed side — NanoEvents schema behavior is replaced by explicit column access and the
+same vector formulas coffea uses. The original, unmodified Dask/coffea analysis and the 22 GB
+`hgg_0` input dataset (800 ROOT files, one `--copy-count 1` copy of the DAGVine reproducibility
+archive) come from
+[`JinZhou5042/sc26-dagvine-reproducibility`](https://github.com/JinZhou5042/sc26-dagvine-reproducibility).
 
-Scheduling individual fused stages is technically possible but is not the default direction. It
-would require stage-addressable evaluation, durable intermediate schemas, worker affinity, and
-intermediate transfer/cache ownership. For DV5, expanding 35 stages plus one External across 4,000
-partitions would create roughly 144,000 computation tasks before result reduction. A future
-extension should therefore introduce optional coarse boundaries around measured expensive
-Externals, resource transitions, or checkpoints instead of creating one remote task per stage.
+### Key results
 
-## DV5 integration result
+Both systems ran the full 22 GB, 800-file `hgg_0` dataset locally on the same machine, capped at
+16 cores (graphed: one local `vine_worker --cores 16`; Dask/coffea: `dask.compute(..., scheduler=
+"processes", num_workers=16)`), with no `samples_ready.json` cache available for either side:
 
-The initial integration was validated with a real coffea/dask-awkward HEP workflow port:
+| stage | graphed + TaskVine | traditional Dask/coffea |
+|---|---|---|
+| fileset metadata scan | ~0 s (blind partitions: one file opened for schema, `N` for data) | 684.4 s (0.86 s/file × 800, single-threaded `uproot.open`) |
+| graph build | 2.19 s (`source_open` 1.02 s + `record` 1.16 s + `compile` 0.008 s) | 2.4 s (`apply_to_fileset`) + 0.003 s (key count) |
+| scheduled units | 1,599 VineGraph tasks (800 leaves + 799 combines) | 264,826 graph keys (331/file) |
+| execution / compute | 495.4 s makespan (real local worker, 16 cores) | 629.3 s (`scheduler=processes`, 16 workers) |
+| **total wall time** | **≈ 499.7 s (~8.3 min)** | **≈ 1,316.1 s (~21.9 min)** |
+| selected events (of 800 files) | 275 | 275 |
 
-- 236 recorded graphed nodes compiled to 37 IR nodes: 35 fused stages, one source, and one
-  External;
-- all 236 recorded nodes remained live; the reduction came from stage fusion, not removal of the
-  scientific operations;
-- 4,000 input partitions lowered to 4,000 process tasks plus 3,999 binary combine tasks;
-- the resulting 7,999-node VineGraph completed on 20 eight-core workers and recovered from worker
-  preemption without driver intervention;
-- selection and kinematic outputs matched the Dask/coffea reference; floating-point differences in
-  fastjet outputs appeared only across different CPU instruction-set classes.
+Correctness: **bit-for-bit identical**. Both sides selected the same 275 of 275 events, and all 39
+compared leaves (`Color_Ring`, 32 ECFs, `msoftdrop`, `pt`, `btag_ak4s`, `pn_HbbvsQCD`, `pn_md`,
+`matching`) matched with `max_rel_diff = 0` (`compare.py`) — both ran on the same CPU this time, so
+there is none of the cross-microarchitecture fastjet drift seen in the multi-machine condor runs
+described below.
 
-The corresponding Dask/coffea graph contained about 1.32 million keys before Dask optimization,
-roughly 331 keys per input partition. These counts describe different scheduling granularities:
-the original workflow wrote one Parquet output per partition and had no equivalent global binary
-reduction, while this executor adds `N - 1` combines to produce one aggregate result.
+### Key insights
+
+- **The dominant cost on the traditional side is metadata, not compute.** graphed's blind
+  partitions never open the 799 non-schema files; Dask/coffea's `apply_to_fileset` needs a
+  `steps`/`num_entries` fileset and paid a 684 s single-threaded scan to build one here. A real
+  coffea pipeline normally amortizes this with a cached, pre-built fileset (what
+  `samples_ready.json` represents) — but that cache still has to be built once, and wasn't
+  available for the full 22 GB set in this run.
+- **graphed is still faster even ignoring the scan.** 495.4 s of VineGraph execution over 1,599
+  scheduled units beat 629.3 s of Dask compute over 264,826 graph keys for the identical physics —
+  consistent with the coarser per-partition granularity (one leaf task runs all 35 fused IR stages
+  instead of exposing every array/schema/IO operation as a separate key).
+- **The metadata scan is single-threaded by construction.** `run_dask_reference.py`'s fallback
+  scan is a plain per-file Python loop, not parallelized across the 16-core cap used for
+  `compute()`; a more engineered pipeline could parallelize or cache it, but this is what the
+  unmodified reference script does.
+- **The External boundary is where correctness risk concentrates.** Jet substructure can't run on
+  typetracers, so it's one opaque node whose correctness depends on faithfully mirroring the
+  original kernel. One concrete footgun found while validating this port: fastjet's dask-awkward
+  wrapper defaults `exclusive_jets_energy_correlator` to `normalized=False`, while the eager API
+  defaults to `normalized=True` — a naive eager port is off by roughly `pT^n` (reference ~1e4,
+  eager ~0.05) unless `normalized=False` is passed explicitly, which both sides do here.
+- **This holds up at larger scale, on real distributed workers, with real failures.** A separate
+  HTCondor run (`800` and `4,000` files, `10×8`- and `20×8`-core workers) produced a 236-node
+  recorded program compiling to the same 37 IR nodes (35 fused stages, one source, one External)
+  regardless of input size, lowered to 1,599- and 7,999-node VineGraphs; the 4,000-file run
+  survived a full first-wave HTCondor preemption (22 worker connections/disconnections, ~4,830
+  re-executions of lost intermediates) with no driver intervention, and matched the Dask/coffea
+  reference to exact selection/kinematics with fastjet outputs agreeing to ≤ 1.03e-5 relative
+  (attributable to CPU instruction-set differences across machines, not the framework). The
+  corresponding Dask/coffea graph reached about 1.32 million keys before optimization at 4,000
+  files (~331 keys per input partition) against `2N − 1` graphed tasks.
 
 ## Development
 
