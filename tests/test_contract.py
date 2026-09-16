@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import pytest
+import toy_plans
 from graphed.core.execution import Executor, StopReason
 
-import toy_plans
 from taskvine_backend import TaskVineExecutor
 
 
