@@ -123,12 +123,10 @@ python -c "import graphed; from taskvine_backend import TaskVineExecutor"
 
 ## Quick start
 
-The example reconstructs the H -> gamma gamma diphoton mass spectrum from the 16 public GamGam ROOT
-files of the `2025e-13tev-beta` [ATLAS Open Data](https://opendata.cern.ch) 13 TeV release (about
-9.86 GB). It downloads the files through `atlasopenmagic`/`fsspec`, keeps the leading two photons per
-event, records the same selection as the ATLAS Open Data H->yy notebook (tight photon ID, pT,
-calorimeter isolation, eta transition-region veto, and the diphoton invariant mass) with Graphed, and
-fills a 100-160 GeV histogram through this executor. One partition is created per input ROOT file.
+The example downloads 16 public GamGam ROOT files from the `2025e-13tev-beta`
+[ATLAS Open Data](https://opendata.cern.ch) 13 TeV release (about 9.86 GB), records the same
+event selection as the ATLAS Open Data H->yy notebook with Graphed, and fills a histogram through
+this executor. One partition is created per input ROOT file.
 
 Run the complete workflow locally through VineGraph:
 
@@ -143,10 +141,6 @@ events in 100-160 GeV: 251659
 highest bin center: 100.5 GeV
 process/combine tasks: 16/15
 ```
-
-The highest bin sits at the low edge of the window because the diphoton background falls roughly
-monotonically over 100-160 GeV; the H -> gamma gamma signal is a small excess near 125 GeV on top of
-that background, not the tallest bin, at this sample size.
 
 The core analysis in [`examples/atlas_hyy.py`](examples/atlas_hyy.py) is ordinary deferred Graphed
 code operating on the flattened leading-two-photon columns:
@@ -311,16 +305,12 @@ own dispatch overhead.
 
 ### DV5 (large scale, real HEP production workload)
 
-DV5 is the ECF-calculator H→γγ PFNano skim behind the DAGVine/SC26 hero run: softdrop-fix event
-cut, trigger OR, lepton/tau counting with ΔR cleaning, b-tag counting, generator-level Higgs
-matching, fat-jet selection, and per-jet substructure (color ring and energy correlators via
-`fastjet`). [`examples/dv5.py`](examples/dv5.py) records all of this in graphed. Jet substructure
-(PF constituents → fastjet C/A → soft drop → ECFs + color ring) is one External node, since
-fastjet can't run on awkward typetracers, so graphed gets its output form by running it once on a
-tiny synthetic event. No coffea on the graphed side. NanoEvents schema handling is replaced by
-explicit column access and the same vector formulas coffea uses. The 22 GB `hgg_0` dataset (800
-ROOT files, one `--copy-count 1` copy of the DAGVine reproducibility archive) comes from the repo
-cited above.
+DV5 is a real HEP event-selection and jet-substructure analysis, the ECF-calculator skim behind
+the DAGVine/SC26 hero run. [`examples/dv5.py`](examples/dv5.py) records the full event selection
+in graphed. Its heaviest step, jet substructure via `fastjet`, is one External node, since fastjet
+can't run on awkward typetracers, so graphed gets its output form by running it once on a tiny
+synthetic event. No coffea on the graphed side. The 22 GB `hgg_0` dataset (800 ROOT files, one
+`--copy-count 1` copy of the DAGVine reproducibility archive) comes from the repo cited above.
 
 <a id="dv5-run-it-yourself"></a>Run it yourself (this needs `fastjet`, `vector`, `scipy`, and the
 `uproot.graphed`-providing `graphed-org/uproot5-graphed-mvp` development fork in place of released
@@ -374,11 +364,10 @@ cross-microarchitecture fastjet drift from the multi-machine condor runs below s
   pipeline could fix that, but this is what the unmodified reference does.
 - Correctness held exactly at every scale: 2004/2004, 251659/251659, 275/275 with 39/39 leaves
   bit-for-bit. The speedups above come from scheduling, not from cutting corners on the physics.
-- Jet substructure is the one opaque boundary here (fastjet can't run on typetracers), so it's
-  where correctness risk concentrates. One real footgun found while validating this: fastjet's
-  dask-awkward wrapper defaults `exclusive_jets_energy_correlator` to `normalized=False`, while the
-  eager API defaults to `normalized=True`. An eager port that doesn't pass `normalized=False`
-  explicitly is off by roughly `pT^n`.
+- The External boundary (jet substructure here) is where correctness risk concentrates, since
+  graphed can't inspect what happens inside it. Validating this port surfaced a real footgun: the
+  same underlying library defaulted to different behavior depending on whether it was called
+  eagerly or lazily, and matching the reference required passing that setting explicitly.
 - This holds up past a single machine, too. An HTCondor run at 800 and 4,000 files (`10×8`- and
   `20×8`-core workers) kept the same 236→37 recorded-node/IR ratio regardless of size, survived a
   full first-wave preemption (22 worker connections/disconnections, ~4,830 re-executions) with no
