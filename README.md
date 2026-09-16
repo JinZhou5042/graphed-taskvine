@@ -232,13 +232,13 @@ In an environment that already contains a compatible TaskVine build:
 python -m pip install -r requirements.txt
 ruff check --target-version py311 --line-length 110 --select E,F,I,UP,B,SIM,C4,RUF --ignore E501 *.py tests examples
 ruff format --check --target-version py311 --line-length 110 *.py tests examples
-pytest -q tests
+python -m pytest -q tests
 ```
 
 The default test suite uses VineGraph local execution. Run the worker integration path with:
 
 ```bash
-GTV_WORKER=1 pytest tests/test_executor.py
+GTV_WORKER=1 python -m pytest -q tests/test_executor.py
 ```
 
 ## Security boundary

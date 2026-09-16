@@ -23,4 +23,4 @@ jobs:
       - name: Format
         run: ruff format --check --target-version py311 --line-length 110 *.py tests examples
       - name: Contract tests
-        run: pytest tests/test_contract.py
+        run: python -m pytest -q tests/test_contract.py
