@@ -345,36 +345,6 @@ Correctness: both sides selected the same 275 of 275 events, and all 39 compared
 with `max_rel_diff = 0` (`compare.py`). Both ran on the same CPU this time, so none of the
 cross-microarchitecture fastjet drift from the multi-machine condor runs below shows up.
 
-### Key insights
-
-- Speedup tracks how much real work there is, not file count. ~1x at toy scale (nothing to do),
-  ~5.3x at medium scale (pure scheduling), ~2.6x at DV5 scale. That's smaller than medium scale
-  even though DV5 is the biggest dataset, because most of the traditional side's time there goes
-  to opening files, not computing.
-- `apply_to_fileset` needs a fileset built from `steps`/`num_entries`, which cost 684 s of
-  single-threaded `uproot.open` over 800 files. graphed's blind partitions skip this: one file
-  opened for schema, the rest planned blind. A cached fileset (`samples_ready.json`) would remove
-  this cost for a real coffea pipeline too, but building that cache once is the same problem.
-- Strip the scan out and graphed is still faster. 495.4 s over 1,599 tasks beats 629.3 s over
-  264,826 keys at DV5 scale, and 5.35 s over 31 tasks beats 50.79 s over 1,232 keys at H→γγ
-  scale. Same mechanism both times: one task runs a whole partition's fused IR instead of
-  exposing every array operation as its own scheduled key.
-- The metadata scan is single-threaded because `run_dask_reference.py`'s fallback scan is a plain
-  Python loop, not parallelized under the 16-core cap used for `compute()`. A more engineered
-  pipeline could fix that, but this is what the unmodified reference does.
-- Correctness held exactly at every scale: 2004/2004, 251659/251659, 275/275 with 39/39 leaves
-  bit-for-bit. The speedups above come from scheduling, not from cutting corners on the physics.
-- The External boundary (jet substructure here) is where correctness risk concentrates, since
-  graphed can't inspect what happens inside it. Validating this port surfaced a real footgun: the
-  same underlying library defaulted to different behavior depending on whether it was called
-  eagerly or lazily, and matching the reference required passing that setting explicitly.
-- This holds up past a single machine, too. An HTCondor run at 800 and 4,000 files (`10×8`- and
-  `20×8`-core workers) kept the same 236→37 recorded-node/IR ratio regardless of size, survived a
-  full first-wave preemption (22 worker connections/disconnections, ~4,830 re-executions) with no
-  intervention, and matched the Dask/coffea reference exactly outside of fastjet's ≤1.03e-5
-  cross-CPU drift. The corresponding Dask/coffea graph reached ~1.32 million keys at 4,000 files
-  against graphed's `2N − 1` tasks.
-
 ## Development
 
 In an environment that already contains a compatible TaskVine build:
