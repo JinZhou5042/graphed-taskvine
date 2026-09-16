@@ -244,22 +244,104 @@ Plans and shipped modules are trusted executable inputs. TaskVine may retry leav
 external writes must be idempotent or content-addressed. Adaptive stop conditions are evaluated
 between rounds rather than during a running round.
 
-## graphed vs. traditional Dask/coffea: the DV5 workflow
+## graphed vs. traditional Dask/coffea, across three workflows
+
+Each of this repository's three examples was run both ways — through `TaskVineExecutor` and
+through a plain local Dask/coffea-style pipeline doing the identical selection over the identical
+input files — at three different scales: a single tiny file, a real 9.86 GB open-data download,
+and a real 22 GB, 800-file HEP production dataset. The traditional side for CMS dimuon and ATLAS
+H→γγ lives in this repository at [`baselines/cms_dimuon_dask.py`](baselines/cms_dimuon_dask.py)
+and [`baselines/atlas_hyy_dask.py`](baselines/atlas_hyy_dask.py) (plain `uproot.dask` /
+`dask.dataframe`, no coffea, no cluster — what a physicist would write without this integration).
+DV5's traditional side is the original, unmodified `ecf_calculator.py` analysis from
+[`JinZhou5042/sc26-dagvine-reproducibility`](https://github.com/JinZhou5042/sc26-dagvine-reproducibility)
+and is not duplicated into this repository (it needs coffea, dask-awkward, and fastjet, and its
+correctness depends on being byte-identical to the DAGVine/SC26 hero-run reference).
+
+### Overview
+
+| workflow | scale | graphed + TaskVine (wall) | traditional (wall) | speedup | correctness |
+|---|---|---|---|---|---|
+| [CMS dimuon](#quick-start) | 1 file, 2,304 events (toy) | 1.79 s | 1.77–1.89 s | **~1x (noise)** | exact match |
+| [ATLAS H→γγ](#quick-start) | 16 files, 9.86 GB | 9.9 s (5.35 s execution) | 52.25 s | **~5.3x** | exact match |
+| [DV5](#dv5-run-it-yourself) | 800 files, 22 GB | 499.7 s (~8.3 min) | 1,316.1 s (~21.9 min) | **~2.6x** | bit-for-bit identical |
+
+All three ran locally, single machine, no distributed factory. "Traditional" always means the
+same physics, computed without graphed or TaskVine. Details for each workflow follow.
+
+### CMS dimuon (toy scale)
+
+Single 2,304-event ROOT file, opposite-sign muon pairs, invariant mass, 60-bin 60–120 GeV
+histogram — [`examples/cms_dimuon.py`](examples/cms_dimuon.py) vs.
+[`baselines/cms_dimuon_dask.py`](baselines/cms_dimuon_dask.py) (`uproot.dask` + plain
+`dask.compute`, 5 partitions to match graphed's `steps_per_file=5`):
+
+| | graphed + TaskVine | traditional dask-awkward |
+|---|---|---|
+| events in 60–120 GeV | 2004 | 2004 |
+| peak bin center | 90.5 GeV | 90.5 GeV |
+| scheduled units | 9 VineGraph tasks (5 process + 4 combine) | 135 dask graph keys |
+| cold wall time | 1.789 s | 1.77–1.89 s |
+
+**No meaningful speedup at this scale, and that's the finding.** Real work inside the script is
+well under a second on both sides (graphed's own makespan is 0.107 s; the dask baseline's
+build+compute is 0.46–0.66 s) — the ~1.8 s each process actually takes is dominated by Python and
+library import time, not by either framework's scheduling. A single small file is exactly the
+regime where this integration has nothing to offer over calling `uproot`/`awkward` directly; it
+exists here as a fast, low-dependency smoke test, not a performance argument.
+
+### ATLAS H→γγ (medium scale, real Open Data)
+
+16 real ATLAS Open Data ROOT files (~9.86 GB), diphoton selection and mass reconstruction, 60-bin
+100–160 GeV histogram — [`examples/atlas_hyy.py`](examples/atlas_hyy.py) vs.
+[`baselines/atlas_hyy_dask.py`](baselines/atlas_hyy_dask.py) (`dask.dataframe.read_parquet` over
+the same per-file flat Parquets, `scheduler="processes"`, 4 workers, matching graphed's
+`libcores=4`):
+
+| | graphed + TaskVine | traditional Dask |
+|---|---|---|
+| events in 100–160 GeV | 251659 | 251659 |
+| peak bin center | 100.5 GeV | 100.5 GeV |
+| scheduled units | 31 VineGraph tasks (16 process + 15 combine) | 1,232 dask graph keys |
+| graph build | — | 0.13 s |
+| execution / compute | 5.35 s makespan | 50.79 s |
+| **total wall time** | **9.9 s** | **52.25 s** |
+
+**~5.3x faster wall-to-wall, with no metadata-scan trick involved** — both sides read the same
+already-flattened Parquet files, so this gap is scheduling granularity alone: one VineGraph leaf
+task per file running the whole fused IR vs. Dask spreading the same work over 1,232 keys, each
+with its own scheduling overhead. This is the cleanest read of graphed's per-partition coarsening
+in this repository, since there's no expensive `uproot` metadata scan here to muddy the picture
+(unlike DV5, below).
+
+### DV5 (large scale, real HEP production workload)
 
 DV5 is the ECF-calculator H→γγ PFNano skim behind the DAGVine/SC26 hero run: a real ATLAS
 diphoton analysis (softdrop-fix event cut, trigger OR, lepton/tau counting with ΔR cleaning,
 b-tag counting, generator-level Higgs matching, the fat-jet selection, and per-jet substructure —
-color ring and energy correlation functions via `fastjet`). `dv5_graphed.py` records the whole
-selection above in graphed; jet substructure (PF constituents → fastjet C/A → soft drop → ECFs +
-color ring) is one **External** node, because fastjet cannot run on awkward typetracers, so
-graphed takes its output form from running it once on a tiny synthetic event. No coffea is used
-on the graphed side — NanoEvents schema behavior is replaced by explicit column access and the
-same vector formulas coffea uses. The original, unmodified Dask/coffea analysis and the 22 GB
-`hgg_0` input dataset (800 ROOT files, one `--copy-count 1` copy of the DAGVine reproducibility
-archive) come from
-[`JinZhou5042/sc26-dagvine-reproducibility`](https://github.com/JinZhou5042/sc26-dagvine-reproducibility).
+color ring and energy correlation functions via `fastjet`). [`examples/dv5.py`](examples/dv5.py)
+records the whole selection above in graphed; jet substructure (PF constituents → fastjet C/A →
+soft drop → ECFs + color ring) is one **External** node, because fastjet cannot run on awkward
+typetracers, so graphed takes its output form from running it once on a tiny synthetic event. No
+coffea is used on the graphed side — NanoEvents schema behavior is replaced by explicit column
+access and the same vector formulas coffea uses. The 22 GB `hgg_0` input dataset (800 ROOT files,
+one `--copy-count 1` copy of the DAGVine reproducibility archive) comes from the reproducibility
+repository cited above.
 
-### Key results
+<a id="dv5-run-it-yourself"></a>Run it yourself (this needs `fastjet`, `vector`, `scipy`, and the
+`uproot.graphed`-providing `graphed-org/uproot5-graphed-mvp` development fork in place of released
+`uproot` -- see the module docstring):
+
+```bash
+python -m examples.dv5 --data-dir dv5-data --files 5
+```
+
+By default this downloads the ~22 GB Zenodo archive on first use and processes the first 5 of its
+800 files; point `--data-dir` at an existing extraction (for example a previously downloaded
+`hgg_0`) and pass `--files 0` to reproduce the full-dataset numbers below with local execution.
+`--distributed` is not yet verified for this example (unlike `examples/atlas_hyy.py`); the numbers
+below were produced with the underlying analysis run directly against a real `vine_worker`, not
+through this CLI's `--distributed` flag.
 
 Both systems ran the full 22 GB, 800-file `hgg_0` dataset locally on the same machine, capped at
 16 cores (graphed: one local `vine_worker --cores 16`; Dask/coffea: `dask.compute(..., scheduler=
@@ -280,18 +362,24 @@ compared leaves (`Color_Ring`, 32 ECFs, `msoftdrop`, `pt`, `btag_ak4s`, `pn_Hbbv
 there is none of the cross-microarchitecture fastjet drift seen in the multi-machine condor runs
 described below.
 
-### Key insights
+### Key insights, across all three
 
-- **The dominant cost on the traditional side is metadata, not compute.** graphed's blind
-  partitions never open the 799 non-schema files; Dask/coffea's `apply_to_fileset` needs a
-  `steps`/`num_entries` fileset and paid a 684 s single-threaded scan to build one here. A real
-  coffea pipeline normally amortizes this with a cached, pre-built fileset (what
-  `samples_ready.json` represents) — but that cache still has to be built once, and wasn't
-  available for the full 22 GB set in this run.
-- **graphed is still faster even ignoring the scan.** 495.4 s of VineGraph execution over 1,599
-  scheduled units beat 629.3 s of Dask compute over 264,826 graph keys for the identical physics —
-  consistent with the coarser per-partition granularity (one leaf task runs all 35 fused IR stages
-  instead of exposing every array/schema/IO operation as a separate key).
+- **Speedup tracks how much real work there is, not raw file count.** Toy scale (1 file): no
+  signal, overhead-dominated, ~1x. Medium scale (16 files, real compute, no metadata bottleneck):
+  ~5.3x from scheduling granularity alone. Large scale (800 files, expensive per-file metadata):
+  ~2.6x, with the metadata scan itself the single biggest lever.
+- **The dominant cost on the traditional side, once files are numerous and metadata is expensive,
+  is opening files, not computing.** graphed's blind partitions never open the 799 non-schema DV5
+  files; Dask/coffea's `apply_to_fileset` needs a `steps`/`num_entries` fileset and paid a 684 s
+  single-threaded scan to build one here. A real coffea pipeline normally amortizes this with a
+  cached, pre-built fileset (what `samples_ready.json` represents) — but that cache still has to be
+  built once, and wasn't available for the full 22 GB set in this run.
+- **graphed is still faster even ignoring the scan, at both the medium and large scale.** DV5:
+  495.4 s of VineGraph execution over 1,599 scheduled units beat 629.3 s of Dask compute over
+  264,826 graph keys. ATLAS H→γγ: 5.35 s over 31 units beat 50.79 s over 1,232 keys, with no scan
+  cost on either side. Both are consistent with the same mechanism — one leaf task runs all fused
+  IR stages for a partition, instead of exposing every array/schema/IO operation as a separate
+  scheduled key.
 - **The metadata scan is single-threaded by construction.** `run_dask_reference.py`'s fallback
   scan is a plain per-file Python loop, not parallelized across the 16-core cap used for
   `compute()`; a more engineered pipeline could parallelize or cache it, but this is what the
@@ -302,6 +390,9 @@ described below.
   wrapper defaults `exclusive_jets_energy_correlator` to `normalized=False`, while the eager API
   defaults to `normalized=True` — a naive eager port is off by roughly `pT^n` (reference ~1e4,
   eager ~0.05) unless `normalized=False` is passed explicitly, which both sides do here.
+- **Correctness held exactly at every scale.** 2004/2004 (dimuon), 251659/251659 (H→γγ), and
+  275/275 with 39/39 bit-for-bit leaves (DV5) — the speedups above come from scheduling, not from
+  cutting corners on the physics.
 - **This holds up at larger scale, on real distributed workers, with real failures.** A separate
   HTCondor run (`800` and `4,000` files, `10×8`- and `20×8`-core workers) produced a 236-node
   recorded program compiling to the same 37 IR nodes (35 fused stages, one source, one External)
