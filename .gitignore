@@ -15,4 +15,5 @@ worker-*/
 *.err
 *.parquet
 *.root
+*.part
 *.tar.gz

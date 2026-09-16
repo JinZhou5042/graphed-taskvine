@@ -87,6 +87,7 @@ git clone --branch task-graph --single-branch https://github.com/JinZhou5042/cct
 cd cctools-src
 unset PYTHONPATH
 conda env create -y -f environment.yml
+conda install -y -n cctools-dev --override-channels -c conda-forge --strict-channel-priority python=3.13
 conda activate cctools-dev
 ./configure --with-base-dir "$CONDA_PREFIX" --prefix "$CONDA_PREFIX"
 make -j4
@@ -102,44 +103,83 @@ vine_worker --version
 
 The branch's
 [VineGraph guide](https://github.com/JinZhou5042/cctools/blob/task-graph/doc/manuals/taskvine/vine-graph.md)
-covers local workflows, workers, HTCondor submission, factories, and execution parameters.
+covers local workflows, workers, HTCondor submission, factories, and execution parameters. The
+explicit Python pin above avoids an untested future Python version when `environment.yml` resolves
+its broad `python=3` requirement.
 
-Then return to this repository, install its Python dependencies, and run from the repository root:
+## Install Graphed and this integration
+
+For an existing Python environment, Graphed's Awkward and Parquet support is installed with
+`python -m pip install "graphed[awkward,parquet]"`. For this integration, clone the repository
+inside the active `cctools-dev` environment. Its requirements also install the Graphed executor
+and histogram libraries, Uproot, and the small set of development dependencies used here:
 
 ```bash
+git clone https://github.com/JinZhou5042/graphed-taskvine.git
+cd graphed-taskvine
 python -m pip install -r requirements.txt
+python -c "import graphed; from taskvine_backend import TaskVineExecutor"
 ```
 
 ## Quick start
 
-Build a normal graphed plan, then choose `TaskVineExecutor` at execution time:
+The example reconstructs the Z boson peak from the 2,304-event CMS dimuon ROOT sample used in the
+[Uproot getting-started guide](https://uproot.readthedocs.io/en/stable/basic.html). The sample is
+derived from [CMS Run2010B open data](https://opendata.cern.ch/record/700). It downloads the ROOT
+file, converts the ten required branches to Parquet, selects opposite-sign muons, records the
+invariant-mass calculation with Graphed, and fills a 60-120 GeV histogram through this executor.
 
-```python
-from taskvine_backend import TaskVineExecutor
-
-plan = build_plan()  # graphed.core.execution.Plan
-
-with TaskVineExecutor(
-    manager_name="graphed-example",
-    libcores=8,
-    wait_for_workers=1,
-) as executor:
-    result = executor.run(plan)
-
-print(result.value)
-print(executor.last_stats)
-```
-
-Workers connect to the manager in the usual TaskVine way:
+Run the complete workflow locally through VineGraph:
 
 ```bash
-vine_worker -M graphed-example
+python -m examples.cms_dimuon
 ```
 
-For a local lowering and execution check that does not require external workers:
+Expected summary:
+
+```text
+events in 60-120 GeV: 2004
+highest bin center: 90.5 GeV
+process/combine tasks: 5/4
+```
+
+The core analysis in [`examples/cms_dimuon.py`](examples/cms_dimuon.py) is ordinary deferred
+Graphed code:
 
 ```python
-result = TaskVineExecutor(local=True).run(plan)
+import boost_histogram as bh
+import graphed_histogram as gh
+from graphed import Session
+from graphed.awkward import AwkwardBackend, from_parquet
+
+from taskvine_backend import TaskVineExecutor
+
+session = Session(AwkwardBackend())
+events = from_parquet(session, "events", "cms-dimuon-data/Zmumu.parquet")
+muons = events[events.Q1 * events.Q2 < 0]
+mass2 = (
+    (muons.E1 + muons.E2) ** 2
+    - (muons.px1 + muons.px2) ** 2
+    - (muons.py1 + muons.py2) ** 2
+    - (muons.pz1 + muons.pz2) ** 2
+)
+
+histogram = gh.boost.Histogram(bh.axis.Regular(60, 60, 120), storage=bh.storage.Int64())
+histogram.fill(mass2**0.5)
+plan = gh.plan({"dimuon_mass": histogram}, steps_per_file=5)
+
+with TaskVineExecutor(local=True, port=0) as executor:
+    result = executor.run(plan)
+```
+
+To execute the same plan on a TaskVine worker, use two terminals in the same environment:
+
+```bash
+# terminal 1
+vine_worker -M graphed-dimuon --cores 4
+
+# terminal 2, from this repository
+python -m examples.cms_dimuon --distributed
 ```
 
 `local=True` still uses VineGraph and the same binary reduction topology; it is not the same as

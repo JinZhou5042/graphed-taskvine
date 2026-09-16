@@ -1,4 +1,4 @@
-"""A graphed ``Executor`` that runs plans on TaskVine through VineGraph (DAGVine).
+"""A graphed ``Executor`` that runs plans on TaskVine through VineGraph.
 
 ``TaskVineExecutor().run(plan)`` lowers a ``graphed.core.Plan`` into a VineGraph ``Workflow``:
 
